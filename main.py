@@ -82,8 +82,9 @@ def fetch_version_details(mirror, versions):
         mirror += "/"
     result = []
     for v in versions:
+        if not v.endswith("/"):
+            continue
         url = mirror + v + "/version.json"
-        print(url)
         try:
             r = requests.get(url)
             pub_time = r.json()["time"]
