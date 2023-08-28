@@ -15,9 +15,9 @@ default_config = {
     "ignore": [
         "*.conf",
         "*.json",
-        "tmp/**",
-        "screenshot/**",
-        "adb_buildin/**",
+        "tmp/**/*",
+        "screenshot/**/*",
+        "adb_buildin/**/*",
     ],
     "install_dir": "",
 }
@@ -36,7 +36,7 @@ else:
 layout = [
     [
         sg.Text("镜像：", size=(10, 1)),
-        sg.Input(conf["mirror"], key="-mirror-", size=(53, 1)),
+        sg.Input(conf["mirror"], key="-mirror-", size=(55, 1)),
         sg.Button("刷新", size=(4, 1)),
     ],
     [
@@ -45,7 +45,7 @@ layout = [
     ],
     [
         sg.Text("安装目录：", size=(10, 1)),
-        sg.Input(conf["install_dir"], size=(53, 1), key="install-dir"),
+        sg.Input(conf["install_dir"], size=(55, 1), key="install-dir"),
         sg.FolderBrowse("...", target="install-dir", size=(4, 1)),
     ],
     [
@@ -53,10 +53,10 @@ layout = [
         sg.Multiline("\n".join(conf["ignore"]), key="-ignore-", size=(60, 8)),
     ],
     [
-        sg.Button("开始安装", size=(71, 2)),
+        sg.Button("开始安装", size=(66, 2)),
     ],
     [
-        sg.Text("点击“刷新”以获取版本列表", key="status", size=(71, 1)),
+        sg.Text("点击“刷新”以获取版本列表", key="status", size=(66, 1)),
     ],
 ]
 
@@ -119,14 +119,11 @@ def prepare_to_install(path, new_hash, pattern_list):
     ignore_list = []
     for pattern in pattern_list:
         for file in path.glob(pattern):
-            ignore_list.append(str(file)[len(str(path)) + 1 :])
+            ignore_list.append(str(file)[len(str(path)) + 1 :].replace("\\", "/"))
     old_hash = hash(path)
     for f, h in new_hash.items():
         if f in old_hash:
             if old_hash[f] != h and f not in ignore_list:
-                print(f)
-                print(old_hash[f])
-                print(h)
                 replace_list.append(f)
         elif f not in ignore_list:
             new_list.append(f)
@@ -157,7 +154,6 @@ def download_single_file():
     else:
         return None
     url = f"{mirror}{version_name}/{subpath}"
-    print(url)
     r = requests.get(url)
     path = pathlib.Path(conf["install_dir"]) / "mower" / subpath
     path.parent.mkdir(exist_ok=True, parents=True)
@@ -195,6 +191,9 @@ while True:
         window["versions"].update(values=[v["display_name"] for v in versions])
         window["status"].update("已获取版本列表")
     elif event == "开始安装":
+        if not values["versions"]:
+            window["status"].update("请选择要安装的版本！")
+            continue
         window["status"].update("正在安装……")
         version_display_name = values["versions"][0]
         version = next(i for i in versions if i["display_name"] == version_display_name)
@@ -216,6 +215,7 @@ while True:
             + "\n".join(remove_list)
             + "\n\n是否继续安装？",
             yes_no=True,
+            size=(80, 24),
             title="安装确认",
         )
         if begin_install == "Yes":
@@ -227,7 +227,6 @@ while True:
             window["status"].update("安装已取消")
     elif event == "-install-single-":
         subpath = values["-install-single-"]
-        print(subpath)
         if subpath:
             window["status"].update(
                 f"已处理{subpath}，剩余{len(remove_list) + len(replace_list) + len(new_list)}个文件……"
