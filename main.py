@@ -17,14 +17,16 @@ default_config = {
         "screenshot/",
         "adb_buildin/",
     ],
+    "install_dir": "",
 }
 
-conf_dir_path = pathlib.Path(platformdirs.user_config_dir())
+conf_dir_path = pathlib.Path(platformdirs.user_config_dir("mower_updater"))
 conf_dir_path.mkdir(exist_ok=True, parents=True)
 conf_path = conf_dir_path / "config.json"
 if conf_path.exists():
     with conf_path.open("r") as f:
         conf = json.load(f)
+        default_config.update(conf)
 else:
     conf = default_config
 
@@ -32,27 +34,27 @@ else:
 layout = [
     [
         sg.Text("镜像：", size=(10, 1)),
-        sg.Input(conf["mirror"], key="-mirror-", size=(33, 1)),
+        sg.Input(conf["mirror"], key="-mirror-", size=(53, 1)),
         sg.Button("刷新", size=(4, 1)),
     ],
     [
         sg.vtop(sg.Text("版本：", size=(10, 1))),
-        sg.Listbox([], key="versions", size=(40, 6)),
+        sg.Listbox([], key="versions", size=(60, 6)),
     ],
     [
         sg.Text("安装目录：", size=(10, 1)),
-        sg.Input(size=(33, 1)),
-        sg.Button("...", size=(4, 1)),
+        sg.Input(conf["install_dir"], size=(53, 1), key="install-dir"),
+        sg.FolderBrowse("...", target="install-dir", size=(4, 1)),
     ],
     [
         sg.vtop(sg.Text("忽略：", size=(10, 1))),
-        sg.Multiline("\n".join(conf["ignore"]), key="-ignore-", size=(40, 8)),
+        sg.Multiline("\n".join(conf["ignore"]), key="-ignore-", size=(60, 8)),
     ],
     [
-        sg.Button("开始安装", size=(51, 2)),
+        sg.Button("开始安装", size=(71, 2)),
     ],
     [
-        sg.Text("", key="status", size=(51, 1)),
+        sg.Text("", key="status", size=(71, 1)),
     ],
 ]
 
@@ -105,6 +107,7 @@ while True:
 
     conf["mirror"] = values["-mirror-"]
     conf["ignore"] = [l for l in values["-ignore-"].splitlines() if l.strip()]
+    conf["install_dir"] = values["install-dir"]
     if event == sg.WINDOW_CLOSE_ATTEMPTED_EVENT:
         break
     elif event == "刷新":
