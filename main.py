@@ -6,6 +6,7 @@ import pathlib
 import json
 import requests
 import htmllistparse
+from hash import hash
 
 
 default_config = {
@@ -54,7 +55,7 @@ layout = [
         sg.Button("开始安装", size=(71, 2)),
     ],
     [
-        sg.Text("", key="status", size=(71, 1)),
+        sg.Text("点击“刷新”以获取版本列表", key="status", size=(71, 1)),
     ],
 ]
 
@@ -95,9 +96,43 @@ def fetch_version_details(mirror, versions):
             {
                 "version": v,
                 "display_name": f"{v} ({pub_time})",
+                "hash": r.json()["hash"],
             }
         )
     return result
+
+
+new_list = []
+replace_list = []
+remove_list = []
+
+
+def prepare_to_install(path, new_hash):
+    global new_list
+    global replace_list
+    global remove_list
+    old_hash = hash(path)
+    for f, h in new_hash.items():
+        if f in old_hash:
+            if old_hash[f] != h:
+                replace_list.append(f)
+        else:
+            new_list.append(f)
+    for f, h in old_hash.items():
+        if f not in new_hash:
+            remove_list.append(f)
+    print(
+        f"new: {len(new_list)}, replace: {len(replace_list)}, remove: {len(remove_list)}"
+    )
+    print("new:")
+    print(new_list)
+    print("replace:")
+    print(replace_list)
+    print("remove:")
+    print(remove_list)
+
+
+global versions
 
 
 while True:
@@ -128,11 +163,25 @@ while True:
         else:
             sg.PopupError(values["-connect-mirror-"]["msg"])
     elif event == "-version-details-":
+        global versions
         versions = values["-version-details-"]
         window["versions"].update(values=[v["display_name"] for v in versions])
-        window["status"].update("")
+        window["status"].update("已获取版本列表")
     elif event == "开始安装":
-        print("install")
+        window["status"].update("正在安装……")
+        version_display_name = values["versions"][0]
+        version_hash_list = next(
+            i["hash"] for i in versions if i["display_name"] == version_display_name
+        )
+        path = pathlib.Path(conf["install_dir"]) / "mower"
+        path.mkdir(exist_ok=True, parents=True)
+        window.perform_long_operation(
+            lambda: prepare_to_install(path, version_hash_list),
+            "-calc-hash-",
+        )
+    elif event == "-calc-hash-":
+        window["status"].update("安装完成")
+
 
 window.close()
 
