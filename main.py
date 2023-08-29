@@ -7,7 +7,7 @@ import json
 import requests
 import htmllistparse
 from hash import hash
-from fnmatch import fnmatch
+from multiprocessing.pool import ThreadPool
 
 
 default_config = {
@@ -20,6 +20,7 @@ default_config = {
         "adb_buildin/**/*",
     ],
     "install_dir": "",
+    "pool_limit": 32,
 }
 
 conf_dir_path = pathlib.Path(platformdirs.user_config_dir("mower_updater"))
@@ -29,8 +30,7 @@ if conf_path.exists():
     with conf_path.open("r") as f:
         conf = json.load(f)
         default_config.update(conf)
-else:
-    conf = default_config
+conf = default_config
 
 
 layout = [
@@ -51,6 +51,10 @@ layout = [
     [
         sg.vtop(sg.Text("忽略：", size=(10, 1))),
         sg.Multiline("\n".join(conf["ignore"]), key="-ignore-", size=(60, 8)),
+    ],
+    [
+        sg.Text("线程数：", size=(10, 1)),
+        sg.Input(conf["pool_limit"], size=(62, 1), key="pool-limit"),
     ],
     [
         sg.Button("开始安装", size=(66, 2)),
@@ -135,24 +139,18 @@ def prepare_to_install(path, new_hash, pattern_list):
 version_name = ""
 
 
-def download_single_file():
+def remove_files():
+    global remove_list
+    for subpath in remove_list:
+        path = pathlib.Path(conf["install_dir"]) / "mower" / subpath
+        path.unlink()
+    remove_list = []
+
+
+def download_single_file(subpath):
     mirror = conf["mirror"]
     if not mirror.endswith("/"):
         mirror += "/"
-    global new_list
-    global replace_list
-    global remove_list
-    if remove_list:
-        subpath = remove_list.pop()
-        path = pathlib.Path(conf["install_dir"]) / "mower" / subpath
-        path.unlink()
-        return subpath
-    elif new_list:
-        subpath = new_list.pop()
-    elif replace_list:
-        subpath = replace_list.pop()
-    else:
-        return None
     url = f"{mirror}{version_name}/{subpath}"
     r = requests.get(url)
     path = pathlib.Path(conf["install_dir"]) / "mower" / subpath
@@ -162,11 +160,23 @@ def download_single_file():
     return subpath
 
 
+def download_all_files(window):
+    remove_files()
+    remain_files = len(new_list) + len(replace_list)
+    with ThreadPool(conf["pool_limit"]) as pool:
+        for subpath in pool.imap_unordered(
+            download_single_file, new_list + replace_list
+        ):
+            remain_files -= 1
+            window["status"].update(f"已处理{subpath}，剩余{remain_files}个文件……")
+
+
 while True:
     event, values = window.read()
     conf["mirror"] = values["-mirror-"]
     conf["ignore"] = [l for l in values["-ignore-"].splitlines() if l.strip()]
     conf["install_dir"] = values["install-dir"]
+    conf["pool_limit"] = int(values["pool-limit"])
     if event == sg.WINDOW_CLOSE_ATTEMPTED_EVENT:
         break
     elif event == "刷新":
@@ -220,23 +230,13 @@ while True:
         )
         if begin_install == "Yes":
             window.perform_long_operation(
-                lambda: download_single_file(),
-                "-install-single-",
+                lambda: download_all_files(window),
+                "-download-finish-",
             )
         else:
             window["status"].update("安装已取消")
-    elif event == "-install-single-":
-        subpath = values["-install-single-"]
-        if subpath:
-            window["status"].update(
-                f"已处理{subpath}，剩余{len(remove_list) + len(replace_list) + len(new_list)}个文件……"
-            )
-            window.perform_long_operation(
-                lambda: download_single_file(),
-                "-install-single-",
-            )
-        else:
-            window["status"].update("安装完成！")
+    elif event == "-download-finish-":
+        window["status"].update("安装完成！")
 
 
 window.close()
