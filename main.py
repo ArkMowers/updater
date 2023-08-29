@@ -13,11 +13,12 @@ from multiprocessing.pool import ThreadPool
 default_config = {
     "mirror": "https://mower.zhaozuohong.vip",
     "ignore": [
-        "*.conf",
+        "*.yml",
         "*.json",
-        "tmp/**/*",
+        "tmp/*",
+        "log/*",
         "screenshot/**/*",
-        "adb_buildin/**/*",
+        "adb-buildin/*",
     ],
     "install_dir": "",
     "pool_limit": 32,
