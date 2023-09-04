@@ -4,7 +4,11 @@ import json
 from hash import hash
 import pathlib
 from datetime import datetime
-from zoneinfo import ZoneInfo
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
 
 data = {
     "time": datetime.now(tz=ZoneInfo("Asia/Shanghai")).isoformat(),
