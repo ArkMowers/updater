@@ -4,9 +4,10 @@ import json
 from hash import hash
 import pathlib
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 data = {
-    "time": datetime.now().isoformat(),
+    "time": datetime.now(tz=ZoneInfo("Asia/Shanghai")).isoformat(),
     "hash": hash(pathlib.Path.cwd()),
 }
 
