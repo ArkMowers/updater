@@ -22,6 +22,7 @@ default_config = {
     ],
     "install_dir": "",
     "pool_limit": 32,
+    "dir_name": "mower",
 }
 
 conf_dir_path = pathlib.Path(platformdirs.user_config_dir("mower_updater"))
@@ -45,9 +46,13 @@ layout = [
         sg.Listbox([], key="versions", size=(60, 6)),
     ],
     [
-        sg.Text("安装目录：", size=(10, 1)),
+        sg.Text("安装位置：", size=(10, 1)),
         sg.Input(conf["install_dir"], size=(55, 1), key="install-dir"),
         sg.FolderBrowse("...", target="install-dir", size=(4, 1)),
+    ],
+    [
+        sg.Text("子文件夹：", size=(10, 1)),
+        sg.Input(conf["dir_name"], size=(62, 1), key="dir-name"),
     ],
     [
         sg.vtop(sg.Text("忽略：", size=(10, 1))),
@@ -143,7 +148,7 @@ version_name = ""
 def remove_files():
     global remove_list
     for subpath in remove_list:
-        path = pathlib.Path(conf["install_dir"]) / "mower" / subpath
+        path = pathlib.Path(conf["install_dir"]) / conf["dir_name"] / subpath
         path.unlink()
     remove_list = []
 
@@ -154,7 +159,7 @@ def download_single_file(subpath):
         mirror += "/"
     url = f"{mirror}{version_name}/{subpath}"
     r = requests.get(url)
-    path = pathlib.Path(conf["install_dir"]) / "mower" / subpath
+    path = pathlib.Path(conf["install_dir"]) / conf["dir_name"] / subpath
     path.parent.mkdir(exist_ok=True, parents=True)
     with path.open("wb") as f:
         f.write(r.content)
@@ -177,6 +182,7 @@ while True:
     conf["mirror"] = values["-mirror-"]
     conf["ignore"] = [l for l in values["-ignore-"].splitlines() if l.strip()]
     conf["install_dir"] = values["install-dir"]
+    conf["dir_name"] = values["dir-name"]
     conf["pool_limit"] = int(values["pool-limit"])
     if event == sg.WINDOW_CLOSE_ATTEMPTED_EVENT:
         break
@@ -202,15 +208,18 @@ while True:
         window["versions"].update(values=[v["display_name"] for v in versions])
         window["status"].update("已获取版本列表")
     elif event == "开始安装":
+        if not conf["dir_name"]:
+            sg.popup_error("子文件夹不可为空！")
+            continue
         if not values["versions"]:
             window["status"].update("请选择要安装的版本！")
             continue
-        window["status"].update("正在安装……")
+        window["status"].update("开始安装……")
         version_display_name = values["versions"][0]
         version = next(i for i in versions if i["display_name"] == version_display_name)
         version_hash_list = version["hash"]
         version_name = version["version"]
-        path = pathlib.Path(conf["install_dir"]) / "mower"
+        path = pathlib.Path(conf["install_dir"]) / conf["dir_name"]
         path.mkdir(exist_ok=True, parents=True)
         window.perform_long_operation(
             lambda: prepare_to_install(path, version_hash_list, conf["ignore"]),
@@ -218,12 +227,13 @@ while True:
         )
     elif event == "-calc-hash-":
         begin_install = sg.popup_scrolled(
-            f"预计新增{len(new_list)}个文件：\n"
+            f"arknights-mower 将安装至{pathlib.Path(conf['install_dir']) / conf['dir_name']}"
+            + f"\n\n预计删除{len(remove_list)}个文件：\n"
+            + "\n".join(remove_list)
+            + f"\n\n新增{len(new_list)}个文件：\n"
             + "\n".join(new_list)
             + f"\n\n替换{len(replace_list)}个文件：\n"
             + "\n".join(replace_list)
-            + f"\n\n删除{len(remove_list)}个文件：\n"
-            + "\n".join(remove_list)
             + "\n\n是否继续安装？",
             yes_no=True,
             size=(80, 24),
