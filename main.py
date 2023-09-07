@@ -144,25 +144,35 @@ def prepare_to_install(path, new_hash, pattern_list):
 
 version_name = ""
 
+failed_list = []
+
 
 def remove_files():
     global remove_list
+    global failed_list
     for subpath in remove_list:
         path = pathlib.Path(conf["install_dir"]) / conf["dir_name"] / subpath
-        path.unlink()
+        try:
+            path.unlink()
+        except Exception as e:
+            failed_list.append({"path": path, "reason": str(e)})
     remove_list = []
 
 
 def download_single_file(subpath):
+    global failed_list
     mirror = conf["mirror"]
     if not mirror.endswith("/"):
         mirror += "/"
     url = f"{mirror}{version_name}/{subpath}"
-    r = requests.get(url)
-    path = pathlib.Path(conf["install_dir"]) / conf["dir_name"] / subpath
-    path.parent.mkdir(exist_ok=True, parents=True)
-    with path.open("wb") as f:
-        f.write(r.content)
+    try:
+        r = requests.get(url)
+        path = pathlib.Path(conf["install_dir"]) / conf["dir_name"] / subpath
+        path.parent.mkdir(exist_ok=True, parents=True)
+        with path.open("wb") as f:
+            f.write(r.content)
+    except Exception as e:
+        failed_list.append({"path": path, "reason": str(e)})
     return subpath
 
 
@@ -208,6 +218,7 @@ while True:
         window["versions"].update(values=[v["display_name"] for v in versions])
         window["status"].update("已获取版本列表")
     elif event == "开始安装":
+        failed_list = []
         if not conf["dir_name"]:
             sg.popup_error("子文件夹不可为空！")
             continue
@@ -247,7 +258,16 @@ while True:
         else:
             window["status"].update("安装已取消")
     elif event == "-download-finish-":
-        window["status"].update("安装完成！")
+        if failed_list:
+            window["status"].update("安装失败！")
+            sg.popup_scrolled(
+                "\n".join([f"{i['path']}: {i['reason']}" for i in failed_list]),
+                yes_no=True,
+                size=(80, 24),
+                title="安装失败",
+            )
+        else:
+            window["status"].update("安装完成！")
 
 
 window.close()
