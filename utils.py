@@ -9,7 +9,7 @@ def remove_tail_slash(str: str)->str:
 
 
 def hash(path):
-    p = pathlib.Path(path) if isinstance(path, str) else path
+    p = pathlib.Path(path)
     result = {}
     for i in p.glob("**/*"):
         if i.is_file():

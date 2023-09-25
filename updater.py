@@ -1,7 +1,6 @@
 import copy
 import io
 import json
-import os
 import shutil
 import tempfile
 import urllib3
@@ -12,7 +11,6 @@ from htmllistparse import fetch_listing
 from pathlib import Path
 from platformdirs import user_config_dir
 from utils import hash
-from multiprocessing import Queue
 from multiprocessing.pool import ThreadPool
 
 
@@ -192,10 +190,22 @@ class Updater:
                 if callback:
                     callback(remains, str(subpath))
     
+    
+    def remove_old_files(self, path):
+        path = Path(path)
+        ignore_list = []
+        
+        for pattern in self.conf['ignores']:
+            for file in path.glob(pattern):
+                ignore_list.append(file)
+        
+        for file in path.glob('**/*'):
+            if file not in ignore_list:
+                file.unlink()
+    
 
     def remove_files(self, path, diff: Diff):
-        if isinstance(path, str):
-            path = Path(path)
+        path = Path(path)
         failed_list = []
         for subpath in diff.remove_list:
             path = path / subpath
@@ -247,8 +257,7 @@ class Updater:
     
     def new_install(self, ver_name, install_path):
         install_path = Path(install_path)
-        if install_path.exists():
-            shutil.rmtree(install_path)
+        self.remove_old_files(install_path)
         
         mirror = self.conf['mirror']
         url = f"{mirror}/{ver_name}.zip"
@@ -257,7 +266,7 @@ class Updater:
         with zipfile.ZipFile(zip_data) as zf:
             zf.extractall(install_path.parent)
         
-        os.rename(install_path.parent / ver_name, install_path)
+        shutil.move(install_path.parent / ver_name, install_path)
 
         
 
