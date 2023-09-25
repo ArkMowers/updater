@@ -3,6 +3,11 @@ import json
 import pathlib
 from datetime import datetime
 
+
+def remove_tail_slash(str: str)->str:
+    return str[:-1] if str.endswith('/') else str
+
+
 def hash(path):
     p = pathlib.Path(path) if isinstance(path, str) else path
     result = {}
@@ -13,6 +18,7 @@ def hash(path):
                 relative_path = str(i)[len(str(p)) + 1 :].replace("\\", "/")
                 result[relative_path] = hex
     return result
+
 
 def publish():
     try:

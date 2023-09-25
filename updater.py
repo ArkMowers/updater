@@ -1,23 +1,24 @@
-import json
 import copy
+import json
 import requests
-import xxhash
+import shutil
+import tempfile
+from dataclasses import dataclass, field
 from functools import partial
-from dataclasses import dataclass
 from htmllistparse import fetch_listing
-from utils import hash
-from platformdirs import user_config_dir, user_cache_dir
 from pathlib import Path
+from platformdirs import user_config_dir
+from utils import hash
+from multiprocessing import Queue
 from multiprocessing.pool import ThreadPool
-from multiprocessing.queues import Queue
 
 
 @dataclass
 class Diff:
-    new_list: list
-    replace_list: list
-    remove_list: list
-    ignore_list: list
+    new_list: list = field(default_factory=list)
+    replace_list: list = field(default_factory=list)
+    remove_list: list = field(default_factory=list)
+    ignore_list: list = field(default_factory=list)
 
 
 class Updater:
@@ -48,21 +49,26 @@ class Updater:
             "screenshot/**/*",
             "adb-buildin/*"
         ],
-        "pool_limit": 12
+        "pool_limit": 12,
+        "install_dir": "",
+        "install_dir_tips": "为了与GUI版本保持兼容",
+        "dir_name": "mower",
+        "mower_tips": "为了与GUI版本保持兼容",
     }
 
 
-    def __init__(self, conf_path: str | None):
-        self.conf_path = Path(conf_path) if conf_path else Path(user_config_dir("mower_updater", ensure_exists=True)) / 'config.json'
-        self.tmp_dir = Path(user_cache_dir("mower_updater", ensure_exists=True))
+    def __init__(self, conf_path: str | None = None):
+        self.conf_path: Path = Path(conf_path) if conf_path else Path(user_config_dir("mower_updater", ensure_exists=True)) / 'config.json'
+        self.tmp_dir: Path = Path(tempfile.gettempdir())
         self.conf = None
         self.cache = {}
+        #使用字典是为了多镜像做准备的，虽然下载应该只会从一个镜像下载，放着吧，不碍事
         self.sess_pool: dict[str, Queue[requests.Session]] = {}
         self.sess_count = 0
 
 
     def __destroy__(self):
-        pass
+        self._save_conf()
 
 
     def _load_conf(self):
@@ -77,8 +83,13 @@ class Updater:
         self.sess_pool[self.conf['mirror']] = Queue()
 
 
+    def _save_conf(self):
+        with self.conf_path.open('w') as f:
+            json.dump(self.conf, f)
 
-    def connect_mirror(self, mirror):
+
+    def connect_mirror(self, mirror: str = None):
+        mirror = mirror if mirror else self.conf['mirror']
         try: # fetch_listing会retry吗？可能需要添加retry
             cwd, listing = fetch_listing(mirror, timeout=30)
             return {
@@ -93,7 +104,8 @@ class Updater:
             }
 
 
-    def fetch_version_details(self, mirror, versions):
+    def fetch_version_details(self, versions, mirror: str = None):
+        mirror = mirror if mirror else self.conf['mirror']
         if not mirror.endswith("/"):
             mirror += "/"
         result = []
@@ -112,6 +124,7 @@ class Updater:
                     "hash": resp_json["hash"],
                 }
             )
+        self.cache['versions'] = result
         return result
 
 
@@ -140,13 +153,61 @@ class Updater:
             if f in old_hash:
                 if old_hash[f] != h and f not in diff.ignore_list:
                     diff.replace_list.append(f)
-            elif f not in ignore_list:
+            elif f not in diff.ignore_list:
                 diff.new_list.append(f)
         for f, h in old_hash.items():
             if f not in new_hash and f not in diff.ignore_list:
                 diff.remove_list.append(f)
-
+                
         return diff
+    
+
+    def get_session(self, mirror: str = None)->requests.Session:
+        mirror = mirror if mirror else self.conf['mirror']
+        sess = None
+        if self.sess_count < self.conf['pool_limit']:
+            self.sess_count += 1
+            sess = requests.Session()
+            return sess
+        else:
+            return self.sess_pool[mirror].get()
+
+
+    def release_session(self, sess, mirror: str = None):
+        self.sess_pool[mirror].put(sess)
+
+
+    def download_file(self, ver_name, subpath, mirror: str = None):
+        path = self.tmp_dir / ver_name / subpath
+        if path.exists():
+            return # 之前下载过的文件不需要再下载
+        
+        mirror = mirror if mirror else self.conf['mirror']
+        url = f"{mirror}/{ver_name}/{subpath}" # 保持mirror没有结尾斜杠。应该由配置设置方来保证
+
+        sess = self.get_session(mirror)
+        try: # TCP协议在底层已经包含了重传，requests中也有retries相关的定义
+             # 因此如果抛出异常，基本表明下载就是失败了，应该原路回退到调用方为止
+            resp = sess.get(url)
+            path.parent.mkdir(exist_ok=True, parents=True)
+            with path.open("wb") as f:
+                f.write(resp.content)
+        finally:
+            self.release_session(sess, mirror)
+        return path
+
+
+    def download_all_files(self, ver_name, diff: Diff, callback = None, mirror: str = None):
+        mirror = mirror if mirror else self.conf['mirror']
+        remains = len(diff.new_list) + len(diff.replace_list)
+        partial_download = partial(self.download_file, ver_name)
+        with ThreadPool(self.conf["pool_limit"]) as pool:
+            for subpath in pool.imap_unordered(
+                partial_download, diff.new_list + diff.replace_list
+            ):
+                remains -= 1
+                if callback:
+                    callback(remains, subpath)
     
 
     def remove_files(self, path, diff: Diff):
@@ -161,58 +222,32 @@ class Updater:
                 failed_list.append({"path": path, "reason": str(e)})
         return failed_list
     
-
-    def get_session(self, mirror)->requests.Session:
-        sess = None
-        if self.sess_count < self.conf['pool_limit']:
-            self.sess_count += 1
-            sess = requests.Session()
-            return sess
-        else:
-            return self.sess_pool[mirror].get()
-
-
-    def release_session(self, mirror, sess):
-        self.sess_pool[mirror].put(sess)
-
-
-    def download_file(self, mirror, ver_name, subpath):
-        if not mirror.endswith("/"):
-            mirror += "/"
-        url = f"{mirror}{ver_name}/{subpath}"
-
-        sess = self.get_session(mirror)
-        try:
-            resp = sess.get(url)
-            path = self.tmp_dir / ver_name / subpath
-            path.parent.mkdir(exist_ok=True, parents=True)
-            with path.open("wb") as f:
-                f.write(resp.content)
-        finally:
-            self.release_session(sess)
-
-    def download_all_files(self, mirror, ver_name, diff: Diff, callback):
-        remains = len(diff.new_list) + len(diff.replace_list)
-        partial_download = partial(self.download_file, mirror, ver_name)
-        with ThreadPool(self.conf["pool_limit"]) as pool:
-            for subpath in pool.imap_unordered(
-                partial_download, diff.new_list + diff.replace_list
-            ):
-                remains -= 1
-                callback(remains)
     
-    def install(self, ver_name, path):
-        mirror = self.conf['mirror']
-        mirror_status = self.connect_mirror(mirror)
+    def perform_install(self, ver_name, install_path, diff: Diff):
+        self.remove_files(install_path, diff)
+        install_path = Path(install_path)
+        install_path.parent.mkdir(exist_ok=True, parents=True)
+        new_ver_dir: Path = self.tmp_dir / ver_name
+        for item in new_ver_dir.iterdir():
+            shutil.copy(str(item), str(install_path))
+    
+    def install(self, ver_name, install_path):
+        mirror_status = self.connect_mirror()
         if mirror_status['status_code'] != 0:
             raise mirror_status['exception']
 
         versions = self.cache.get('versions')
         if not versions:
-            versions = self.cache['versions'] = self.fetch_version_details()
-        if len(versions) == 0:
-            raise 
+            versions = self.fetch_version_details()
         
+        try:
+            target_version = filter(lambda v: v['version'] == ver_name, versions)[0]
+        except:
+            raise RuntimeError('没有找到目标版本')
+        
+        diff = self.get_diff(install_path, target_version['hash'])
+        self.download_all_files(self, ver_name, diff)
+        self.perform_install(ver_name, install_path, diff)
 
         
 
