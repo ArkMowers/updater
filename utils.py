@@ -4,7 +4,7 @@ import pathlib
 from datetime import datetime
 
 def hash(path):
-    p = pathlib.Path(path)
+    p = pathlib.Path(path) if isinstance(path, str) else path
     result = {}
     for i in p.glob("**/*"):
         if i.is_file():

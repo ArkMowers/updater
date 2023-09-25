@@ -6,26 +6,44 @@ import pathlib
 import json
 import requests
 import htmllistparse
-from hash import hash
+from utils import hash
 from multiprocessing.pool import ThreadPool
-
+from multiprocessing.queues import Queue
 
 default_config = {
     "mirror": "https://mower.zhaozuohong.vip",
-    "ignore": [
+    "code": [
+        "arknights_mower/__init__/data/**/*",
+        "arknights_mower/__init__/solvers/**/*",
+        "arknights_mower/__init__/templates/**/*",
+        "arknights_mower/__init__/ocr/**/*"
+    ],
+    "code_tips": [
+        "code列表中的内容是所有经常变更的内容，具有较强的时效性",
+        "code列表的内容会在发布时打包为zip，以减少传输量，保证版本变更一致性"
+    ],
+    "resources": [
+        "当前版本这是一个无效的参数",
+        "因为既不在ignores也不在code中的文件自动成为resources"
+    ],
+    "resources_tips": [
+        "resources列表的内容会在发布时与上个版本进行差异比较"
+    ],
+    "ignores": [
         "*.yml",
         "*.json",
         "tmp/*",
         "log/*",
         "screenshot/**/*",
-        "adb-buildin/*",
+        "adb-buildin/*"
     ],
     "install_dir": "",
     "pool_limit": 32,
-    "dir_name": "mower",
+    "dir_name": "mower"
 }
 
 conf_dir_path = pathlib.Path(platformdirs.user_config_dir("mower_updater"))
+tmp_path = pathlib.Path(platformdirs.user_cache_dir("mower_updater"))
 conf_dir_path.mkdir(exist_ok=True, parents=True)
 conf_path = conf_dir_path / "config.json"
 if conf_path.exists():
@@ -145,7 +163,7 @@ def prepare_to_install(path, new_hash, pattern_list):
 version_name = ""
 
 failed_list = []
-
+session_pool = Queue()
 
 def remove_files():
     global remove_list

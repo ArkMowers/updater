@@ -25,7 +25,5 @@
         "screenshot/**/*",
         "adb-buildin/*"
     ],
-    "install_dir": "",
-    "pool_limit": 32,
-    "dir_name": "mower"
+    "pool_limit": 12
 }
