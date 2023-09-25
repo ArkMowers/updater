@@ -2,8 +2,6 @@ import json
 import copy
 import requests
 import xxhash
-from urllib3 import PoolManager
-from urllib3.util import Retry
 from functools import partial
 from dataclasses import dataclass
 from htmllistparse import fetch_listing
@@ -59,7 +57,8 @@ class Updater:
         self.tmp_dir = Path(user_cache_dir("mower_updater", ensure_exists=True))
         self.conf = None
         self.cache = {}
-        self.sess_pool: PoolManager = None
+        self.sess_pool: dict[str, Queue[requests.Session]] = {}
+        self.sess_count = 0
 
 
     def __destroy__(self):
@@ -74,7 +73,9 @@ class Updater:
                 default_conf.update(conf)
         self.conf = default_conf
         
-        self.sess_pool = PoolManager(self.conf['pool_limit'], )
+        self.sess_pool.clear()
+        self.sess_pool[self.conf['mirror']] = Queue()
+
 
 
     def connect_mirror(self, mirror):
