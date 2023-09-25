@@ -1,8 +1,11 @@
 import copy
+import io
 import json
-import requests
+import os
 import shutil
 import tempfile
+import urllib3
+import zipfile
 from dataclasses import dataclass, field
 from functools import partial
 from htmllistparse import fetch_listing
@@ -50,6 +53,7 @@ class Updater:
             "adb-buildin/*"
         ],
         "pool_limit": 12,
+        "new_install_threshold": 1000,
         "install_dir": "",
         "install_dir_tips": "为了与GUI版本保持兼容",
         "dir_name": "mower",
@@ -59,12 +63,10 @@ class Updater:
 
     def __init__(self, conf_path: str | None = None):
         self.conf_path: Path = Path(conf_path) if conf_path else Path(user_config_dir("mower_updater", ensure_exists=True)) / 'config.json'
-        self.tmp_dir: Path = Path(tempfile.gettempdir())
+        self.tmp_dir: Path = Path(tempfile.gettempdir()) / 'mower_updater'
         self.conf = None
+        self.http = None
         self.cache = {}
-        #使用字典是为了多镜像做准备的，虽然下载应该只会从一个镜像下载，放着吧，不碍事
-        self.sess_pool: dict[str, Queue[requests.Session]] = {}
-        self.sess_count = 0
 
 
     def __destroy__(self):
@@ -79,8 +81,7 @@ class Updater:
                 default_conf.update(conf)
         self.conf = default_conf
         
-        self.sess_pool.clear()
-        self.sess_pool[self.conf['mirror']] = Queue()
+        self.http = urllib3.PoolManager(self.conf['pool_limit'])
 
 
     def _save_conf(self):
@@ -112,7 +113,7 @@ class Updater:
         for v in versions:
             url = mirror + v + "/version.json"
             try:
-                resp = requests.get(url)
+                resp = self.http.request('GET', url)
                 resp_json = resp.json()
                 pub_time = resp_json["time"]
             except Exception as e:
@@ -160,21 +161,6 @@ class Updater:
                 diff.remove_list.append(f)
                 
         return diff
-    
-
-    def get_session(self, mirror: str = None)->requests.Session:
-        mirror = mirror if mirror else self.conf['mirror']
-        sess = None
-        if self.sess_count < self.conf['pool_limit']:
-            self.sess_count += 1
-            sess = requests.Session()
-            return sess
-        else:
-            return self.sess_pool[mirror].get()
-
-
-    def release_session(self, sess, mirror: str = None):
-        self.sess_pool[mirror].put(sess)
 
 
     def download_file(self, ver_name, subpath, mirror: str = None):
@@ -185,15 +171,12 @@ class Updater:
         mirror = mirror if mirror else self.conf['mirror']
         url = f"{mirror}/{ver_name}/{subpath}" # 保持mirror没有结尾斜杠。应该由配置设置方来保证
 
-        sess = self.get_session(mirror)
-        try: # TCP协议在底层已经包含了重传，requests中也有retries相关的定义
-             # 因此如果抛出异常，基本表明下载就是失败了，应该原路回退到调用方为止
-            resp = sess.get(url)
-            path.parent.mkdir(exist_ok=True, parents=True)
-            with path.open("wb") as f:
-                f.write(resp.content)
-        finally:
-            self.release_session(sess, mirror)
+        # TCP协议在底层已经包含了重传，requests中也有retries相关的定义
+         # 因此如果抛出异常，基本表明下载就是失败了，应该原路回退到调用方为止
+        resp = self.http.request('GET', url)
+        path.parent.mkdir(exist_ok=True, parents=True)
+        with path.open("wb") as f:
+            f.write(resp.data)
         return path
 
 
@@ -207,7 +190,7 @@ class Updater:
             ):
                 remains -= 1
                 if callback:
-                    callback(remains, subpath)
+                    callback(remains, str(subpath))
     
 
     def remove_files(self, path, diff: Diff):
@@ -231,7 +214,9 @@ class Updater:
         for item in new_ver_dir.iterdir():
             shutil.copy(str(item), str(install_path))
     
+    
     def install(self, ver_name, install_path):
+        install_path = Path(install_path)
         mirror_status = self.connect_mirror()
         if mirror_status['status_code'] != 0:
             raise mirror_status['exception']
@@ -241,13 +226,38 @@ class Updater:
             versions = self.fetch_version_details()
         
         try:
-            target_version = filter(lambda v: v['version'] == ver_name, versions)[0]
+            target_version = next(filter(lambda v: v['version'] == ver_name, versions))
         except:
             raise RuntimeError('没有找到目标版本')
         
+        if not install_path.exists() or not any(install_path.iterdir()):
+            self.new_install(ver_name, install_path)
+            return
+        
         diff = self.get_diff(install_path, target_version['hash'])
-        self.download_all_files(self, ver_name, diff)
+        
+        if len(diff.new_list) >= self.conf['new_install_threshold']:
+            # too many files to download; perform new_install
+            self.new_install(ver_name, install_path)
+            return
+        
+        self.download_all_files(ver_name, diff)
         self.perform_install(ver_name, install_path, diff)
+        
+    
+    def new_install(self, ver_name, install_path):
+        install_path = Path(install_path)
+        if install_path.exists():
+            shutil.rmtree(install_path)
+        
+        mirror = self.conf['mirror']
+        url = f"{mirror}/{ver_name}.zip"
+        resp = self.http.request('GET', url)
+        zip_data = io.BytesIO(resp.data)
+        with zipfile.ZipFile(zip_data) as zf:
+            zf.extractall(install_path.parent)
+        
+        os.rename(install_path.parent / ver_name, install_path)
 
         
 

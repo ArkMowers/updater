@@ -8,6 +8,7 @@ updater._load_conf()
 conf = updater.conf
 version_name = ""
 diff = None
+install_path = None
 layout = [
     [
         sg.Text("镜像：", size=(10, 1)),
@@ -65,6 +66,7 @@ while True:
     conf["install_dir"] = values["install-dir"]
     conf["dir_name"] = values["dir-name"]
     conf["pool_limit"] = int(values["pool-limit"])
+    install_path = pathlib.Path(conf["install_dir"]) / conf["dir_name"]
     if event == sg.WINDOW_CLOSE_ATTEMPTED_EVENT:
         break
     elif event == "刷新":
@@ -101,10 +103,8 @@ while True:
         version = next(i for i in versions if i["display_name"] == version_display_name)
         version_hash_list = version["hash"]
         version_name = version["version"]
-        path = pathlib.Path(conf["install_dir"]) / conf["dir_name"]
-        path.mkdir(exist_ok=True, parents=True)
         window.perform_long_operation(
-            lambda: updater.get_diff(path, version_hash_list),
+            lambda: updater.get_diff(install_path, version_hash_list),
             "-calc-hash-",
         )
     elif event == "-calc-hash-":
@@ -124,13 +124,13 @@ while True:
         )
         if begin_install == "Yes":
             window.perform_long_operation(
-                lambda: download_guard(),
+                lambda: updater.install(version_name, install_path),
                 "-download-finish-",
             )
         else:
             window["status"].update("安装已取消")
     elif event == "-download-finish-":
-        install_path = pathlib.Path(conf["install_dir"]) / conf["dir_name"]
+        # updater.perform_install(version_name, install_path, diff)
         window["status"].update("安装完成！")
 
 
